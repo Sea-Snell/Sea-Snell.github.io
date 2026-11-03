@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0e0f0d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="dB Meter">
+<title>dB Meter</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230e0f0d'/%3E%3Cpath d='M14 42a18 18 0 0 1 36 0' fill='none' stroke='%23efe9d8' stroke-width='6' stroke-linecap='round'/%3E%3Cpath d='M32 42 44 26' stroke='%23f2b45a' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0e0f0d;
+    --panel: #171914;
+    --panel-2: #1e211b;
+    --line: #2b2f27;
+    --ink: #efe9d8;
+    --dim: #8f8b7e;
+    --faint: #5c5a52;
+    --calm: #7fd4a0;
+    --moderate: #ecc75f;
+    --loud: #f2944a;
+    --danger: #ff5f4c;
+    --num: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+    --body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); }
+  body {
+    font-family: var(--body);
+    min-height: 100dvh;
+    -webkit-font-smoothing: antialiased;
+    overscroll-behavior: none;
+  }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  .app {
+    max-width: 480px;
+    margin: 0 auto;
+    padding:
+      max(14px, env(safe-area-inset-top))
+      max(16px, env(safe-area-inset-right))
+      max(18px, env(safe-area-inset-bottom))
+      max(16px, env(safe-area-inset-left));
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  /* Header */
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .brand {
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--num); font-weight: 600; font-size: 21px;
+    letter-spacing: 0.04em;
+  }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); transition: background .3s; }
+  .dot.live { background: var(--calm); animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(127,212,160,.55); } 50% { box-shadow: 0 0 0 6px rgba(127,212,160,0); } }
+  .toggles { display: flex; gap: 8px; }
+  .seg {
+    display: flex; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 999px; padding: 3px;
+  }
+  .seg button {
+    border: 0; background: transparent; color: var(--dim);
+    font-family: var(--num); font-weight: 600; font-size: 15px; letter-spacing: .04em;
+    padding: 5px 11px; border-radius: 999px; min-width: 36px;
+    transition: background .15s, color .15s;
+  }
+  .seg button.on { background: var(--ink); color: var(--bg); }
+
+  /* Gauge */
+  .gauge-wrap { position: relative; margin-top: 2px; }
+  .gauge { display: block; width: 100%; height: auto; overflow: visible; }
+  .gauge .tick { stroke: var(--faint); stroke-width: 1.5; stroke-linecap: round; }
+  .gauge .tick.major { stroke: var(--dim); stroke-width: 2; }
+  .gauge .tlabel { fill: var(--dim); font-family: var(--num); font-weight: 500; font-size: 13px; text-anchor: middle; dominant-baseline: middle; }
+  .gauge .track { fill: none; stroke: var(--panel-2); stroke-width: 18; stroke-linecap: round; }
+  .gauge .value { fill: none; stroke-width: 18; stroke-linecap: round; transition: stroke .25s; }
+  .gauge .zone { fill: none; stroke-width: 4; stroke-linecap: butt; opacity: .55; }
+  .gauge .maxmark { stroke: var(--ink); stroke-width: 3; stroke-linecap: round; opacity: 0; transition: opacity .3s; }
+  .gauge .num { font-family: var(--num); font-weight: 600; font-size: 84px; fill: var(--ink); text-anchor: middle; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+  .gauge .num .dec { font-size: 40px; fill: var(--dim); }
+  .gauge .unit { font-family: var(--num); font-weight: 600; font-size: 17px; fill: var(--dim); text-anchor: middle; letter-spacing: .14em; }
+
+  .label {
+    text-align: center; font-size: 16px; font-weight: 500; color: var(--ink);
+    min-height: 22px; margin-top: -6px;
+  }
+  .overload {
+    align-self: center; font-size: 13px; font-weight: 600; letter-spacing: .03em;
+    color: var(--bg); background: var(--danger); padding: 4px 10px; border-radius: 999px;
+  }
+  .overload[hidden] { display: none; }
+
+  /* Stats */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .stat {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 9px 6px 8px; text-align: center;
+  }
+  .stat span { display: block; font-size: 11px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+  .stat b { display: block; font-family: var(--num); font-weight: 600; font-size: 26px; font-variant-numeric: tabular-nums; margin-top: 1px; }
+
+  .exposure {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 11px 14px; display: flex; align-items: center; gap: 12px;
+  }
+  .exposure .ear { flex: none; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--panel-2); }
+  .exposure .ear svg { width: 17px; height: 17px; }
+  .exposure .txt { font-size: 14px; line-height: 1.35; color: var(--dim); }
+  .exposure .txt strong { color: var(--ink); font-weight: 600; }
+
+  /* History */
+  .history { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px 8px; }
+  .hist-head { display: flex; justify-content: space-between; font-size: 11px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); margin-bottom: 6px; }
+  .hist-head span:last-child { font-family: var(--num); font-size: 14px; letter-spacing: .04em; font-variant-numeric: tabular-nums; }
+  canvas { display: block; width: 100%; height: 110px; }
+
+  /* Controls */
+  .controls { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; }
+  .primary, .ghost {
+    border-radius: 999px; font-weight: 600; font-size: 17px; padding: 15px 18px;
+    border: 1px solid transparent; transition: transform .08s, background .2s, color .2s, border-color .2s;
+  }
+  .primary { background: var(--ink); color: var(--bg); font-family: var(--num); font-size: 21px; letter-spacing: .08em; text-transform: uppercase; }
+  .primary.stop { background: transparent; color: var(--danger); border-color: var(--danger); }
+  .ghost { background: var(--panel); border-color: var(--line); color: var(--ink); font-size: 15px; }
+  .primary:active, .ghost:active { transform: scale(.97); }
+
+  .msg { font-size: 14px; line-height: 1.45; color: var(--moderate); text-align: center; margin: 0; min-height: 0; }
+  .msg:empty { display: none; }
+  .foot { font-size: 12px; line-height: 1.45; color: var(--faint); text-align: center; margin: 2px 8px 0; }
+
+  /* Calibration sheet */
+  .backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6);
+    display: flex; align-items: flex-end; justify-content: center; z-index: 10;
+    animation: fade .18s ease-out;
+  }
+  .backdrop[hidden] { display: none; }
+  @keyframes fade { from { opacity: 0; } }
+  .sheet {
+    width: 100%; max-width: 480px; background: var(--panel); border: 1px solid var(--line); border-bottom: 0;
+    border-radius: 22px 22px 0 0;
+    padding: 20px max(18px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+    animation: rise .22s cubic-bezier(.2,.8,.2,1);
+  }
+  @keyframes rise { from { transform: translateY(40px); opacity: .4; } }
+  .sheet h2 { margin: 0 0 6px; font-family: var(--num); font-weight: 600; font-size: 24px; letter-spacing: .04em; text-transform: uppercase; }
+  .sheet p { margin: 0 0 16px; font-size: 14px; line-height: 1.5; color: var(--dim); }
+  .sheet label { display: block; font-size: 11px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); margin-bottom: 6px; }
+  .ref-row { display: flex; gap: 8px; margin-bottom: 18px; }
+  .ref-row input {
+    flex: 1; min-width: 0; background: var(--bg); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 12px; padding: 12px 14px; font-family: var(--num); font-size: 22px; font-weight: 600;
+  }
+  .ref-row input:focus { outline: 2px solid var(--ink); outline-offset: 1px; }
+  .ref-row button { border-radius: 12px; padding: 0 18px; }
+  .offset-row { display: grid; grid-template-columns: 56px 1fr 56px; align-items: center; gap: 8px; margin-bottom: 18px; }
+  .offset-row button { height: 48px; border-radius: 12px; background: var(--bg); border: 1px solid var(--line); font-family: var(--num); font-size: 20px; font-weight: 600; }
+  .offset-row div { text-align: center; }
+  .offset-row div b { display: block; font-family: var(--num); font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .offset-row div span { font-size: 12px; color: var(--dim); }
+  .sheet-actions { display: grid; grid-template-columns: auto 1fr; gap: 8px; }
+  .cal-status { font-size: 13px; color: var(--calm); min-height: 18px; margin: -10px 0 12px; }
+</style>
+</head>
+<body>
+<main class="app">
+  <header class="top">
+    <div class="brand"><span class="dot" id="liveDot"></span>dB Meter</div>
+    <div class="toggles">
+      <div class="seg" role="group" aria-label="Frequency weighting" id="wSeg">
+        <button data-w="A" aria-pressed="true">A</button><button data-w="Z" aria-pressed="false">Z</button>
+      </div>
+      <div class="seg" role="group" aria-label="Response time" id="tSeg">
+        <button data-t="fast" aria-pressed="true">Fast</button><button data-t="slow" aria-pressed="false">Slow</button>
+      </div>
+    </div>
+  </header>
+
+  <section class="gauge-wrap">
+    <svg class="gauge" id="gauge" viewBox="-6 -2 332 252" aria-label="Sound level gauge">
+      <g id="ticks"></g>
+      <g id="zones"></g>
+      <path class="track" id="track"/>
+      <path class="value" id="valueArc" pathLength="1000" stroke-dasharray="1000" stroke-dashoffset="1000"/>
+      <line class="maxmark" id="maxMark"/>
+      <text class="num" id="num" x="160" y="178">--</text>
+      <text class="unit" id="unit" x="160" y="206">dB(A)</text>
+    </svg>
+  </section>
+
+  <div class="label" id="label">Tap Start to measure</div>
+  <div class="overload" id="overload" hidden>Mic overloaded — real level is higher</div>
+
+  <section class="stats">
+    <div class="stat"><span>Min</span><b id="sMin">--</b></div>
+    <div class="stat"><span>Avg</span><b id="sAvg">--</b></div>
+    <div class="stat"><span>Max</span><b id="sMax">--</b></div>
+    <div class="stat"><span>Peak</span><b id="sPeak">--</b></div>
+  </section>
+
+  <section class="exposure">
+    <div class="ear" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8.5a6 6 0 0 1 12 0c0 3.5-3 4.5-3 7.5a3 3 0 0 1-5.5 1.6"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.5-1.5 2-1.5 3.5"/></svg>
+    </div>
+    <div class="txt" id="exposure">Hearing-risk estimate appears once you start measuring.</div>
+  </section>
+
+  <section class="history">
+    <div class="hist-head"><span>Last 60 seconds</span><span id="elapsed">0:00</span></div>
+    <canvas id="hist" aria-label="Sound level over the last 60 seconds"></canvas>
+  </section>
+
+  <section class="controls">
+    <button id="startBtn" class="primary">Start</button>
+    <button id="resetBtn" class="ghost">Reset</button>
+    <button id="calBtn" class="ghost">Calibrate</button>
+  </section>
+
+  <p class="msg" id="msg" role="status"></p>
+  <p class="foot">Phone mics aren't lab instruments: expect a few dB of error, more after calibration drift or above ~110 dB, where most phone mics clip. Avg is the energy average (Leq) since the last reset.</p>
+</main>
+
+<div class="backdrop" id="sheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="calTitle">
+    <h2 id="calTitle">Calibrate</h2>
+    <p>Every phone mic is a little different. For best accuracy, hold your phone next to a trusted sound meter (or another meter app you trust) with a steady sound playing, then enter what it reads.</p>
+    <label for="refInput">Reference meter reads</label>
+    <div class="ref-row">
+      <input type="number" id="refInput" inputmode="decimal" step="0.1" placeholder="e.g. 70">
+      <button id="matchBtn" class="ghost">Match</button>
+    </div>
+    <div class="cal-status" id="calStatus"></div>
+    <label>Or nudge the offset by hand</label>
+    <div class="offset-row">
+      <button id="offMinus" aria-label="Decrease offset by 1 dB">−1</button>
+      <div><b id="offVal">+0.0 dB</b><span>vs. default</span></div>
+      <button id="offPlus" aria-label="Increase offset by 1 dB">+1</button>
+    </div>
+    <div class="sheet-actions">
+      <button id="offReset" class="ghost">Reset</button>
+      <button id="sheetDone" class="primary">Done</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  // ---------- constants ----------
+  const MIN_DB = 20, MAX_DB = 130;
+  const DEFAULT_OFFSET = 110;          // dBFS -> approx dB SPL for a typical phone mic with processing off
+  const TAU = { fast: 0.125, slow: 1.0 };
+  const N = 4096;                      // analysis window (samples)
+  const HIST_LEN = 600, HIST_DT = 0.1; // 60 s at 10 Hz
+  const ZONES = [
+    { to: 70,  color: "var(--calm)",     hex: "#7fd4a0" },
+    { to: 85,  color: "var(--moderate)", hex: "#ecc75f" },
+    { to: 100, color: "var(--loud)",     hex: "#f2944a" },
+    { to: 999, color: "var(--danger)",   hex: "#ff5f4c" },
+  ];
+  const LABELS = [
+    [30,  "Near silence"],
+    [40,  "Quiet — bedroom at night, library"],
+    [55,  "Moderate — quiet office, soft music"],
+    [70,  "Normal conversation"],
+    [85,  "Loud — busy street, vacuum cleaner"],
+    [100, "Very loud — risky over long periods"],
+    [110, "Extremely loud — limit your exposure"],
+    [999, "Painfully loud — protect your ears"],
+  ];
+
+  // ---------- storage (best effort) ----------
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+  };
+  let offset = Number(store.get("dbm.offset", DEFAULT_OFFSET)) || DEFAULT_OFFSET;
+  let weighting = store.get("dbm.w", "A") === "Z" ? "Z" : "A";
+  let speed = store.get("dbm.t", "fast") === "slow" ? "slow" : "fast";
+
+  // ---------- DOM ----------
+  const $ = (id) => document.getElementById(id);
+  const el = {
+    dot: $("liveDot"), num: $("num"), unit: $("unit"), label: $("label"), overload: $("overload"),
+    valueArc: $("valueArc"), track: $("track"), maxMark: $("maxMark"), ticks: $("ticks"), zones: $("zones"),
+    sMin: $("sMin"), sAvg: $("sAvg"), sMax: $("sMax"), sPeak: $("sPeak"), exposure: $("exposure"),
+    hist: $("hist"), elapsed: $("elapsed"), start: $("startBtn"), reset: $("resetBtn"), cal: $("calBtn"),
+    msg: $("msg"), sheet: $("sheet"), refInput: $("refInput"), match: $("matchBtn"), calStatus: $("calStatus"),
+    offVal: $("offVal"), offMinus: $("offMinus"), offPlus: $("offPlus"), offReset: $("offReset"), done: $("sheetDone"),
+  };
+
+  // ---------- gauge geometry ----------
+  const CX = 160, CY = 160, R = 112, A0 = -125, A1 = 125;
+  const SVGNS = "http://www.w3.org/2000/svg";
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const polar = (r, deg) => { const a = deg * Math.PI / 180; return [CX + r * Math.sin(a), CY - r * Math.cos(a)]; };
+  const dbToDeg = (db) => A0 + (clamp(db, MIN_DB, MAX_DB) - MIN_DB) / (MAX_DB - MIN_DB) * (A1 - A0);
+  function arcPath(r, a1, a2) {
+    const [x1, y1] = polar(r, a1), [x2, y2] = polar(r, a2);
+    return `M${x1.toFixed(2)} ${y1.toFixed(2)} A${r} ${r} 0 ${a2 - a1 > 180 ? 1 : 0} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`;
+  }
+  function svg(tag, attrs, parent) {
+    const n = document.createElementNS(SVGNS, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    parent.appendChild(n);
+    return n;
+  }
+  function buildGauge() {
+    el.track.setAttribute("d", arcPath(R, A0, A1));
+    el.valueArc.setAttribute("d", arcPath(R, A0, A1));
+    let from = MIN_DB;
+    for (const z of ZONES) {
+      const to = Math.min(z.to, MAX_DB);
+      svg("path", { d: arcPath(R + 16, dbToDeg(from) + 0.6, dbToDeg(to) - 0.6), class: "zone", stroke: z.hex }, el.zones);
+      from = to;
+      if (from >= MAX_DB) break;
+    }
+    for (let db = MIN_DB; db <= MAX_DB; db += 5) {
+      const major = db % 10 === 0;
+      const a = dbToDeg(db);
+      const [x1, y1] = polar(R + 23, a), [x2, y2] = polar(R + (major ? 31 : 27), a);
+      svg("line", { x1, y1, x2, y2, class: major ? "tick major" : "tick" }, el.ticks);
+      if (db % 20 === 0) {
+        const [tx, ty] = polar(R + 42 + 9 * Math.abs(Math.sin(a * Math.PI / 180)), a);
+        const t = svg("text", { x: tx, y: ty, class: "tlabel" }, el.ticks);
+        t.textContent = db;
+      }
+    }
+  }
+  const zoneOf = (db) => ZONES.find((z) => db < z.to) || ZONES[ZONES.length - 1];
+  const labelOf = (db) => (LABELS.find(([to]) => db < to) || LABELS[LABELS.length - 1])[1];
+
+  // ---------- DSP: FFT + A-weighting ----------
+  function makeFFT(n) {
+    const levels = Math.round(Math.log2(n));
+    const rev = new Uint32Array(n);
+    for (let i = 0; i < n; i++) { let r = 0, x = i; for (let j = 0; j < levels; j++) { r = (r << 1) | (x & 1); x >>>= 1; } rev[i] = r; }
+    const cs = new Float64Array(n / 2), sn = new Float64Array(n / 2);
+    for (let i = 0; i < n / 2; i++) { cs[i] = Math.cos(2 * Math.PI * i / n); sn[i] = Math.sin(2 * Math.PI * i / n); }
+    return (re, im) => {
+      for (let i = 0; i < n; i++) { const j = rev[i]; if (j > i) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; } }
+      for (let size = 2; size <= n; size <<= 1) {
+        const half = size >> 1, step = n / size;
+        for (let i = 0; i < n; i += size) {
+          for (let j = i, k = 0; j < i + half; j++, k += step) {
+            const l = j + half;
+            const tre = re[l] * cs[k] + im[l] * sn[k];
+            const tim = im[l] * cs[k] - re[l] * sn[k];
+            re[l] = re[j] - tre; im[l] = im[j] - tim;
+            re[j] += tre; im[j] += tim;
+          }
+        }
+      }
+    };
+  }
+  // IEC 61672 A-weighting, as a linear power gain
+  function aWeightPow(f) {
+    if (f <= 0) return 0;
+    const f2 = f * f;
+    const ra = (12194 ** 2 * f2 * f2) /
+      ((f2 + 20.6 ** 2) * Math.sqrt((f2 + 107.7 ** 2) * (f2 + 737.9 ** 2)) * (f2 + 12194 ** 2));
+    const g = ra * Math.pow(10, 2.0 / 20);
+    return g * g;
+  }
+
+  const fft = makeFFT(N);
+  const win = new Float64Array(N);
+  let winPow = 0;
+  for (let i = 0; i < N; i++) { win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (N - 1)); winPow += win[i] * win[i]; }
+  winPow /= N;
+  const re = new Float64Array(N), im = new Float64Array(N);
+  const td = new Float32Array(N);
+  let aGain = null; // per-bin A-weight power gains, built once sample rate is known
+
+  // ---------- audio state ----------
+  let audioCtx = null, stream = null, analyser = null, rafId = 0, running = false, wakeLock = null;
+  let lastT = 0, msSmooth = -1, shown = NaN, lastText = 0, lastHist = 0, warm = 0, overloadUntil = 0;
+  // stats are kept as mean-square (linear) so calibration changes apply retroactively
+  let minMs = Infinity, maxMs = 0, peakAmp = 0, energy = 0, runTime = 0;
+  const hist = new Float32Array(HIST_LEN); let histCount = 0, histHead = 0;
+
+  const toDb = (ms) => 10 * Math.log10(Math.max(ms, 1e-14)) + offset;
+  const fmt = (db) => (isFinite(db) ? db.toFixed(1) : "--");
+
+  function measure() {
+    analyser.getFloatTimeDomainData(td);
+    let mean = 0, pk = 0;
+    for (let i = 0; i < N; i++) { mean += td[i]; const a = Math.abs(td[i]); if (a > pk) pk = a; }
+    mean /= N;
+    if (weighting === "Z") {
+      let s = 0;
+      for (let i = 0; i < N; i++) { const v = td[i] - mean; s += v * v; }
+      return { ms: s / N, pk };
+    }
+    for (let i = 0; i < N; i++) { re[i] = (td[i] - mean) * win[i]; im[i] = 0; }
+    fft(re, im);
+    let s = 0;
+    const H = N / 2;
+    for (let k = 1; k <= H; k++) s += (re[k] * re[k] + im[k] * im[k]) * aGain[k] * (k === H ? 1 : 2);
+    return { ms: s / (N * N * winPow), pk };
+  }
+
+  function frame() {
+    if (!running) return;
+    rafId = requestAnimationFrame(frame);
+    const now = performance.now() / 1000;
+    const dt = Math.min(now - lastT, 0.25);
+    lastT = now;
+
+    const { ms, pk } = measure();
+    if (msSmooth < 0) msSmooth = ms;
+    else msSmooth += (ms - msSmooth) * (1 - Math.exp(-dt / TAU[speed]));
+
+    runTime += dt;
+    energy += ms * dt;
+    warm += dt;
+    if (warm > 0.6) { minMs = Math.min(minMs, msSmooth); maxMs = Math.max(maxMs, msSmooth); }
+    if (pk > peakAmp) peakAmp = pk;
+    if (pk >= 0.985) overloadUntil = now + 1.5;
+
+    const level = toDb(msSmooth);
+    shown = level;
+
+    // gauge arc every frame
+    const frac = (clamp(level, MIN_DB, MAX_DB) - MIN_DB) / (MAX_DB - MIN_DB);
+    el.valueArc.setAttribute("stroke-dashoffset", (1000 * (1 - frac)).toFixed(1));
+    el.valueArc.style.stroke = zoneOf(level).hex;
+
+    if (now - lastHist >= HIST_DT) {
+      lastHist = now;
+      hist[histHead] = level; histHead = (histHead + 1) % HIST_LEN; histCount = Math.min(histCount + 1, HIST_LEN);
+      drawHistory();
+    }
+    if (now - lastText >= 0.2) { lastText = now; renderText(level); }
+  }
+
+  function renderText(level) {
+    const s = fmt(level);
+    const [ip, dp] = s.split(".");
+    el.num.innerHTML = dp === undefined ? s : `${ip}<tspan class="dec">.${dp}</tspan>`;
+    el.label.textContent = labelOf(level);
+    el.label.style.color = level >= 85 ? zoneOf(level).hex : "";
+    el.overload.hidden = performance.now() / 1000 > overloadUntil;
+    renderStats();
+  }
+
+  function renderStats() {
+    el.sMin.textContent = isFinite(minMs) ? fmt(toDb(minMs)) : "--";
+    el.sMax.textContent = maxMs > 0 ? fmt(toDb(maxMs)) : "--";
+    el.sPeak.textContent = peakAmp > 0 ? fmt(20 * Math.log10(peakAmp) + offset) : "--";
+    const leq = runTime > 0.5 ? toDb(energy / runTime) : NaN;
+    el.sAvg.textContent = fmt(leq);
+    const t = Math.floor(runTime);
+    el.elapsed.textContent = t >= 3600
+      ? `${Math.floor(t / 3600)}:${String(Math.floor(t / 60) % 60).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`
+      : `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+    renderExposure(leq);
+    if (maxMs > 0) {
+      const a = dbToDeg(toDb(maxMs));
+      const [x1, y1] = polar(R - 13, a), [x2, y2] = polar(R + 9, a);
+      el.maxMark.setAttribute("x1", x1); el.maxMark.setAttribute("y1", y1);
+      el.maxMark.setAttribute("x2", x2); el.maxMark.setAttribute("y2", y2);
+      el.maxMark.style.opacity = 0.9;
+    } else {
+      el.maxMark.style.opacity = 0;
+    }
+  }
+
+  function fmtDuration(hours) {
+    if (hours >= 1) { const h = Math.floor(hours), m = Math.round((hours - h) * 60); return m ? `${h} h ${m} min` : `${h} h`; }
+    const min = hours * 60;
+    if (min >= 1) return `${Math.round(min)} min`;
+    return `${Math.max(1, Math.round(min * 60))} s`;
+  }
+  function renderExposure(leq) {
+    if (!isFinite(leq)) { el.exposure.textContent = "Hearing-risk estimate appears once you start measuring."; return; }
+    if (weighting === "Z") { el.exposure.innerHTML = "Switch to <strong>A</strong> weighting for a hearing-risk estimate."; return; }
+    // NIOSH: 85 dBA for 8 h, 3 dB exchange rate
+    const hours = 8 / Math.pow(2, (leq - 85) / 3);
+    const L = leq.toFixed(0);
+    el.exposure.innerHTML = hours >= 24
+      ? `At the average so far (<strong>${L} dBA</strong>), no daily time limit for hearing safety.`
+      : `At the average so far (<strong>${L} dBA</strong>), the safe daily limit is about <strong>${fmtDuration(hours)}</strong> (NIOSH).`;
+  }
+
+  // ---------- history chart ----------
+  const hctx = el.hist.getContext("2d");
+  let hw = 0, hh = 0, dpr = 1;
+  function sizeCanvas() {
+    dpr = Math.min(window.devicePixelRatio || 1, 3);
+    const r = el.hist.getBoundingClientRect();
+    hw = r.width; hh = r.height;
+    el.hist.width = Math.round(hw * dpr); el.hist.height = Math.round(hh * dpr);
+    hctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawHistory();
+  }
+  const H_LO = 20, H_HI = 120;
+  const yOf = (db) => hh - 4 - (clamp(db, H_LO, H_HI) - H_LO) / (H_HI - H_LO) * (hh - 8);
+  function drawHistory() {
+    if (!hw) return;
+    hctx.clearRect(0, 0, hw, hh);
+    hctx.font = "500 10px Barlow, system-ui, sans-serif";
+    hctx.textBaseline = "middle";
+    for (const g of [40, 60, 80, 100]) {
+      const y = Math.round(yOf(g)) + 0.5;
+      hctx.strokeStyle = "#2b2f27"; hctx.lineWidth = 1; hctx.setLineDash([]);
+      hctx.beginPath(); hctx.moveTo(0, y); hctx.lineTo(hw - 22, y); hctx.stroke();
+      hctx.fillStyle = "#5c5a52"; hctx.textAlign = "right"; hctx.fillText(g, hw, y);
+    }
+    const y85 = Math.round(yOf(85)) + 0.5;
+    hctx.strokeStyle = "rgba(242,148,74,.65)"; hctx.setLineDash([4, 4]);
+    hctx.beginPath(); hctx.moveTo(0, y85); hctx.lineTo(hw - 22, y85); hctx.stroke();
+    hctx.setLineDash([]);
+    if (histCount < 2) return;
+
+    const plotW = hw - 26, step = plotW / (HIST_LEN - 1);
+    const grad = hctx.createLinearGradient(0, yOf(H_HI), 0, yOf(H_LO));
+    const stop = (db) => 1 - (db - H_LO) / (H_HI - H_LO);
+    grad.addColorStop(0, "#ff5f4c"); grad.addColorStop(stop(100), "#ff5f4c");
+    grad.addColorStop(stop(100), "#f2944a"); grad.addColorStop(stop(85), "#f2944a");
+    grad.addColorStop(stop(85), "#ecc75f"); grad.addColorStop(stop(70), "#ecc75f");
+    grad.addColorStop(stop(70), "#7fd4a0"); grad.addColorStop(1, "#7fd4a0");
+
+    hctx.beginPath();
+    let x0 = 0;
+    for (let i = 0; i < histCount; i++) {
+      const idx = (histHead - histCount + i + HIST_LEN) % HIST_LEN;
+      const x = plotW - (histCount - 1 - i) * step;
+      const y = yOf(hist[idx]);
+      if (i === 0) { hctx.moveTo(x, y); x0 = x; } else hctx.lineTo(x, y);
+    }
+    hctx.strokeStyle = grad; hctx.lineWidth = 2; hctx.lineJoin = "round"; hctx.stroke();
+    hctx.lineTo(plotW, hh); hctx.lineTo(x0, hh); hctx.closePath();
+    hctx.globalAlpha = 0.16; hctx.fillStyle = grad; hctx.fill(); hctx.globalAlpha = 1;
+  }
+
+  // ---------- start / stop ----------
+  async function start() {
+    el.msg.textContent = "";
+    if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      el.msg.textContent = "Microphone access isn't available here. Open this page over https in Safari or Chrome (not inside another app's preview).";
+      return;
+    }
+    el.start.disabled = true;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
+        video: false,
+      });
+    } catch (err) {
+      el.start.disabled = false;
+      el.msg.textContent = err && err.name === "NotAllowedError"
+        ? "Microphone access was blocked. Allow the microphone for this site in your browser settings, then tap Start again."
+        : `Couldn't open the microphone (${err && err.name ? err.name : "error"}).`;
+      return;
+    }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    audioCtx = new AC();
+    if (audioCtx.state === "suspended") { try { await audioCtx.resume(); } catch {} }
+    const src = audioCtx.createMediaStreamSource(stream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = N;
+    analyser.smoothingTimeConstant = 0;
+    src.connect(analyser);
+    aGain = new Float64Array(N / 2 + 1);
+    for (let k = 0; k <= N / 2; k++) aGain[k] = aWeightPow(k * audioCtx.sampleRate / N);
+
+    running = true;
+    msSmooth = -1; warm = 0; lastT = performance.now() / 1000; lastText = 0; lastHist = 0;
+    el.start.disabled = false;
+    el.start.textContent = "Stop"; el.start.classList.add("stop");
+    el.dot.classList.add("live");
+    requestWakeLock();
+    rafId = requestAnimationFrame(frame);
+  }
+
+  function stop() {
+    running = false;
+    cancelAnimationFrame(rafId);
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    if (audioCtx) audioCtx.close().catch(() => {});
+    stream = null; audioCtx = null; analyser = null;
+    el.start.textContent = "Start"; el.start.classList.remove("stop");
+    el.dot.classList.remove("live");
+    el.label.textContent = "Paused — stats kept until you reset";
+    el.label.style.color = "";
+    el.overload.hidden = true;
+    releaseWakeLock();
+  }
+
+  function reset() {
+    minMs = Infinity; maxMs = 0; peakAmp = 0; energy = 0; runTime = 0; warm = 0;
+    histCount = 0; histHead = 0; msSmooth = -1;
+    renderStats(); drawHistory();
+    if (!running) {
+      el.num.textContent = "--";
+      el.valueArc.setAttribute("stroke-dashoffset", "1000");
+      el.label.textContent = "Tap Start to measure";
+      shown = NaN;
+    }
+  }
+
+  async function requestWakeLock() {
+    try { if ("wakeLock" in navigator) { wakeLock = await navigator.wakeLock.request("screen"); } } catch {}
+  }
+  function releaseWakeLock() { try { if (wakeLock) wakeLock.release(); } catch {} wakeLock = null; }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && running) {
+      requestWakeLock();
+      if (audioCtx && audioCtx.state !== "running") audioCtx.resume().catch(() => {});
+      lastT = performance.now() / 1000; // don't count time spent in the background
+    }
+  });
+
+  // ---------- toggles ----------
+  function syncToggles() {
+    for (const b of document.querySelectorAll("#wSeg button")) { const on = b.dataset.w === weighting; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on); }
+    for (const b of document.querySelectorAll("#tSeg button")) { const on = b.dataset.t === speed; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on); }
+    el.unit.textContent = weighting === "A" ? "dB(A)" : "dB(Z)";
+  }
+  document.getElementById("wSeg").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b || b.dataset.w === weighting) return;
+    weighting = b.dataset.w; store.set("dbm.w", weighting); syncToggles(); reset();
+  });
+  document.getElementById("tSeg").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    speed = b.dataset.t; store.set("dbm.t", speed); syncToggles();
+  });
+
+  el.start.addEventListener("click", () => (running ? stop() : start()));
+  el.reset.addEventListener("click", reset);
+
+  // ---------- calibration ----------
+  function syncOffset() {
+    const d = offset - DEFAULT_OFFSET;
+    el.offVal.textContent = `${d >= 0 ? "+" : "−"}${Math.abs(d).toFixed(1)} dB`;
+    store.set("dbm.offset", offset);
+    if (running && isFinite(shown)) { shown = toDb(msSmooth); renderText(shown); } else renderStats();
+  }
+  const setOffset = (v) => { offset = clamp(Math.round(v * 10) / 10, DEFAULT_OFFSET - 40, DEFAULT_OFFSET + 40); syncOffset(); };
+  el.cal.addEventListener("click", () => { el.calStatus.textContent = ""; syncOffset(); el.sheet.hidden = false; });
+  el.done.addEventListener("click", () => { el.sheet.hidden = true; });
+  el.sheet.addEventListener("click", (e) => { if (e.target === el.sheet) el.sheet.hidden = true; });
+  el.offMinus.addEventListener("click", () => setOffset(offset - 1));
+  el.offPlus.addEventListener("click", () => setOffset(offset + 1));
+  el.offReset.addEventListener("click", () => { setOffset(DEFAULT_OFFSET); el.calStatus.textContent = "Back to the default calibration."; });
+  el.match.addEventListener("click", () => {
+    const ref = parseFloat(el.refInput.value);
+    if (!isFinite(ref)) { el.calStatus.style.color = "var(--moderate)"; el.calStatus.textContent = "Enter the reference meter's reading first."; return; }
+    if (!running || msSmooth < 0) { el.calStatus.style.color = "var(--moderate)"; el.calStatus.textContent = "Start the meter first, then match while the sound is playing."; return; }
+    const before = toDb(msSmooth);
+    setOffset(offset + (ref - before));
+    el.calStatus.style.color = "var(--calm)";
+    el.calStatus.textContent = `Matched: ${before.toFixed(1)} → ${toDb(msSmooth).toFixed(1)} dB. Saved on this device.`;
+  });
+
+  // ---------- init ----------
+  buildGauge();
+  syncToggles();
+  sizeCanvas();
+  renderStats();
+  window.addEventListener("resize", sizeCanvas);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(drawHistory);
+
+})();
+</script>
+</body>
+</html>
