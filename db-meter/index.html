@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="dB Meter">
+<title>dB Meter</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔊</text></svg>">
+<style>
+  /* Lato, same files as the home page */
+  @font-face { font-family: 'Lato'; font-style: normal; font-weight: 400; src: local('Lato Regular'), local('Lato-Regular'), url(https://fonts.gstatic.com/s/lato/v15/S6uyw4BMUTPHjx4wXiWtFCc.woff2) format('woff2'); }
+  @font-face { font-family: 'Lato'; font-style: normal; font-weight: 700; src: local('Lato Bold'), local('Lato-Bold'), url(https://fonts.gstatic.com/s/lato/v15/S6u9w4BMUTPHh6UVSwiPGQ3q5d0.woff2) format('woff2'); }
+
+  body {
+    margin: 0; background: #fff; color: #000;
+    font-family: 'Lato', Verdana, Helvetica, sans-serif; font-size: 16px; line-height: 1.45;
+  }
+  .page { max-width: 800px; margin: 0 auto; padding: 16px 20px 40px; }
+  p { margin: 0 0 12px; }
+  .link {
+    font: inherit; background: none; border: 0; padding: 6px 2px; margin: 0;
+    color: #1772d0; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  @media (hover: hover) { .link:hover { color: #f09228; } }
+  .link:focus-visible { color: #f09228; outline: none; }
+  .link:disabled { color: #999; cursor: default; }
+  .sel { font-weight: 700; }
+  .center { text-align: center; }
+  .muted { color: #666; }
+  .highlight { background-color: #ffffd0; }
+
+  .name { font-size: 36px; text-align: center; margin: 12px 0 4px; font-weight: 400; }
+  .nav { font-size: 18px; }
+
+  .num { font-size: 120px; line-height: 1; margin-top: 24px; font-variant-numeric: tabular-nums; }
+  .unit { margin-top: 4px; }
+  .label { margin-top: 10px; }
+
+  canvas { display: block; width: 100%; height: 130px; margin-top: 24px; }
+
+  .heading { font-size: 32px; margin: 36px 0 12px; font-weight: 400; }
+  .settings p { margin-bottom: 10px; }
+  input[type=number] {
+    font: inherit; font-size: 16px; width: 4.5em; padding: 3px 6px;
+    border: 1px solid #bbb; border-radius: 0; background: #fff; color: #000;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <p class="name">dB Meter</p>
+  <p class="center nav">
+    <button class="link" id="startBtn">Start</button> &nbsp;/&nbsp;
+    <button class="link" id="resetBtn">Reset</button>
+  </p>
+
+  <div class="center">
+    <div class="num" id="num">--</div>
+    <div class="unit" id="unit">dB(A)</div>
+    <div class="label"><span id="label">Press Start and allow the microphone.</span></div>
+    <div class="label" id="overloadWrap" hidden><span class="highlight">Mic overloaded, the real level is higher.</span></div>
+  </div>
+
+  <p class="center" style="margin-top:22px">
+    min <b id="sMin">--</b> &nbsp;/&nbsp; avg <b id="sAvg">--</b> &nbsp;/&nbsp; max <b id="sMax">--</b> &nbsp;/&nbsp; peak <b id="sPeak">--</b>
+  </p>
+  <p class="center"><span id="exposure"></span></p>
+  <p id="msg" class="center"></p>
+
+  <canvas id="hist" aria-label="Sound level over the last 60 seconds"></canvas>
+  <p class="center muted" style="font-size:14px;margin-top:6px">Last 60 seconds. Elapsed <span id="elapsed">0:00</span>.</p>
+
+  <div class="settings">
+    <p class="heading">Settings</p>
+    <p>Weighting: <span id="wOpts"></span><br><span class="muted" style="font-size:14px">A approximates human hearing; Z is unweighted.</span></p>
+    <p>Response: <span id="tOpts"></span><br><span class="muted" style="font-size:14px">Fast is 125 ms, slow is 1 s.</span></p>
+    <p>Calibration offset: <b id="offVal">+0 dB</b> &nbsp;(<button class="link" id="offMinus">−1</button> / <button class="link" id="offPlus">+1</button> / <button class="link" id="offReset">reset</button>)</p>
+    <p>Match a reference: <input type="number" id="refInput" inputmode="decimal" step="0.1" aria-label="Reference reading in dB"> dB &nbsp;<button class="link" id="matchBtn">match</button><br><span class="muted" style="font-size:14px" id="calStatus">With the meter running and a steady sound playing, enter what a trusted meter reads.</span></p>
+  </div>
+
+  <p class="heading">Notes</p>
+  <p>Phone microphones aren't lab instruments, so expect a few dB of error. Readings above about 110 dB will run low because most phone mics clip. Avg is the energy average (Leq) since the last reset. The safe-time estimate follows NIOSH guidance: 85 dBA for 8 hours, halved for every 3 dB above that.</p>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const MIN_DB = 20, MAX_DB = 130;
+  const DEFAULT_OFFSET = 110;          // dBFS -> approx dB SPL for a typical phone mic with processing off
+  const TAU = { fast: 0.125, slow: 1.0 };
+  const N = 4096;
+  const HIST_LEN = 600, HIST_DT = 0.1; // 60 s at 10 Hz
+  const LABELS = [
+    [30,  "Near silence."],
+    [40,  "Quiet, like a library."],
+    [55,  "Moderate, like a quiet office."],
+    [70,  "Normal conversation."],
+    [85,  "Loud, like busy traffic."],
+    [100, "Very loud, risky over long periods."],
+    [110, "Extremely loud, limit exposure."],
+    [999, "Painfully loud, protect your ears."],
+  ];
+
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+  };
+  let offset = Number(store.get("dbm.offset", DEFAULT_OFFSET)) || DEFAULT_OFFSET;
+  let weighting = store.get("dbm.w", "A") === "Z" ? "Z" : "A";
+  let speed = store.get("dbm.t", "fast") === "slow" ? "slow" : "fast";
+
+  const $ = (id) => document.getElementById(id);
+  const el = {
+    num: $("num"), unit: $("unit"), label: $("label"), overload: $("overloadWrap"), hist: $("hist"),
+    sMin: $("sMin"), sAvg: $("sAvg"), sMax: $("sMax"), sPeak: $("sPeak"), exposure: $("exposure"),
+    elapsed: $("elapsed"), start: $("startBtn"), reset: $("resetBtn"), msg: $("msg"),
+    wOpts: $("wOpts"), tOpts: $("tOpts"), offVal: $("offVal"), offMinus: $("offMinus"), offPlus: $("offPlus"),
+    offReset: $("offReset"), refInput: $("refInput"), match: $("matchBtn"), calStatus: $("calStatus"),
+  };
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const labelOf = (db) => (LABELS.find(([to]) => db < to) || LABELS[LABELS.length - 1])[1];
+
+  // ---------- DSP: FFT + A-weighting ----------
+  function makeFFT(n) {
+    const levels = Math.round(Math.log2(n));
+    const rev = new Uint32Array(n);
+    for (let i = 0; i < n; i++) { let r = 0, x = i; for (let j = 0; j < levels; j++) { r = (r << 1) | (x & 1); x >>>= 1; } rev[i] = r; }
+    const cs = new Float64Array(n / 2), sn = new Float64Array(n / 2);
+    for (let i = 0; i < n / 2; i++) { cs[i] = Math.cos(2 * Math.PI * i / n); sn[i] = Math.sin(2 * Math.PI * i / n); }
+    return (re, im) => {
+      for (let i = 0; i < n; i++) { const j = rev[i]; if (j > i) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; } }
+      for (let size = 2; size <= n; size <<= 1) {
+        const half = size >> 1, step = n / size;
+        for (let i = 0; i < n; i += size) {
+          for (let j = i, k = 0; j < i + half; j++, k += step) {
+            const l = j + half;
+            const tre = re[l] * cs[k] + im[l] * sn[k];
+            const tim = im[l] * cs[k] - re[l] * sn[k];
+            re[l] = re[j] - tre; im[l] = im[j] - tim;
+            re[j] += tre; im[j] += tim;
+          }
+        }
+      }
+    };
+  }
+  function aWeightPow(f) {             // IEC 61672 A-weighting as a linear power gain
+    if (f <= 0) return 0;
+    const f2 = f * f;
+    const ra = (12194 ** 2 * f2 * f2) /
+      ((f2 + 20.6 ** 2) * Math.sqrt((f2 + 107.7 ** 2) * (f2 + 737.9 ** 2)) * (f2 + 12194 ** 2));
+    const g = ra * Math.pow(10, 2.0 / 20);
+    return g * g;
+  }
+  const fft = makeFFT(N);
+  const win = new Float64Array(N);
+  let winPow = 0;
+  for (let i = 0; i < N; i++) { win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (N - 1)); winPow += win[i] * win[i]; }
+  winPow /= N;
+  const re = new Float64Array(N), im = new Float64Array(N), td = new Float32Array(N);
+  let aGain = null;
+
+  // ---------- state ----------
+  let audioCtx = null, stream = null, analyser = null, rafId = 0, running = false, wakeLock = null;
+  let lastT = 0, msSmooth = -1, shown = NaN, lastText = 0, lastHist = 0, warm = 0, overloadUntil = 0;
+  let minMs = Infinity, maxMs = 0, peakAmp = 0, energy = 0, runTime = 0;
+  const hist = new Float32Array(HIST_LEN); let histCount = 0, histHead = 0;
+  const toDb = (ms) => 10 * Math.log10(Math.max(ms, 1e-14)) + offset;
+  const int = (db) => (isFinite(db) ? String(Math.round(db)) : "--");
+
+  function measure() {
+    analyser.getFloatTimeDomainData(td);
+    let mean = 0, pk = 0;
+    for (let i = 0; i < N; i++) { mean += td[i]; const a = Math.abs(td[i]); if (a > pk) pk = a; }
+    mean /= N;
+    if (weighting === "Z") {
+      let s = 0;
+      for (let i = 0; i < N; i++) { const v = td[i] - mean; s += v * v; }
+      return { ms: s / N, pk };
+    }
+    for (let i = 0; i < N; i++) { re[i] = (td[i] - mean) * win[i]; im[i] = 0; }
+    fft(re, im);
+    let s = 0;
+    const H = N / 2;
+    for (let k = 1; k <= H; k++) s += (re[k] * re[k] + im[k] * im[k]) * aGain[k] * (k === H ? 1 : 2);
+    return { ms: s / (N * N * winPow), pk };
+  }
+
+  function frame() {
+    if (!running) return;
+    rafId = requestAnimationFrame(frame);
+    const now = performance.now() / 1000;
+    const dt = Math.min(now - lastT, 0.25);
+    lastT = now;
+
+    const { ms, pk } = measure();
+    if (msSmooth < 0) msSmooth = ms;
+    else msSmooth += (ms - msSmooth) * (1 - Math.exp(-dt / TAU[speed]));
+    runTime += dt; energy += ms * dt; warm += dt;
+    if (warm > 0.6) { minMs = Math.min(minMs, msSmooth); maxMs = Math.max(maxMs, msSmooth); }
+    if (pk > peakAmp) peakAmp = pk;
+    if (pk >= 0.985) overloadUntil = now + 1.5;
+
+    const level = toDb(msSmooth);
+    shown = level;
+    if (now - lastHist >= HIST_DT) {
+      lastHist = now;
+      hist[histHead] = level; histHead = (histHead + 1) % HIST_LEN; histCount = Math.min(histCount + 1, HIST_LEN);
+      drawHistory();
+    }
+    if (now - lastText >= 0.25) { lastText = now; renderText(level); }
+  }
+
+  function renderText(level) {
+    el.num.textContent = int(level);
+    el.label.textContent = labelOf(level);
+    el.label.classList.toggle("highlight", level >= 85);
+    el.overload.hidden = performance.now() / 1000 > overloadUntil;
+    renderStats();
+  }
+
+  function renderStats() {
+    el.sMin.textContent = isFinite(minMs) ? int(toDb(minMs)) : "--";
+    el.sMax.textContent = maxMs > 0 ? int(toDb(maxMs)) : "--";
+    el.sPeak.textContent = peakAmp > 0 ? int(20 * Math.log10(peakAmp) + offset) : "--";
+    const leq = runTime > 0.5 ? toDb(energy / runTime) : NaN;
+    el.sAvg.textContent = int(leq);
+    const t = Math.floor(runTime);
+    el.elapsed.textContent = (t >= 3600 ? `${Math.floor(t / 3600)}:${String(Math.floor(t / 60) % 60).padStart(2, "0")}:` : `${Math.floor(t / 60)}:`) + String(t % 60).padStart(2, "0");
+    renderExposure(leq);
+  }
+
+  function fmtDuration(hours) {
+    if (hours >= 1) { const h = Math.floor(hours), m = Math.round((hours - h) * 60); return m ? `${h} h ${m} min` : `${h} h`; }
+    const min = hours * 60;
+    return min >= 1 ? `${Math.round(min)} min` : `${Math.max(1, Math.round(min * 60))} s`;
+  }
+  function renderExposure(leq) {
+    if (!isFinite(leq)) { el.exposure.textContent = ""; el.exposure.className = ""; return; }
+    if (weighting !== "A") { el.exposure.textContent = "Switch to A weighting for a safe-time estimate."; el.exposure.className = "muted"; return; }
+    const hours = 8 / Math.pow(2, (leq - 85) / 3); // NIOSH: 85 dBA for 8 h, 3 dB exchange
+    el.exposure.textContent = hours >= 24
+      ? "Safe daily limit at this average: none."
+      : "Safe daily limit at this average: ";
+    if (hours < 24) { const d = document.createElement("span"); d.style.whiteSpace = "nowrap"; d.textContent = `about ${fmtDuration(hours)}.`; el.exposure.append(d); }
+    el.exposure.className = hours <= 8 ? "highlight" : "";
+  }
+
+  // ---------- chart ----------
+  const hctx = el.hist.getContext("2d");
+  let hw = 0, hh = 0;
+  function sizeCanvas() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    const r = el.hist.getBoundingClientRect();
+    hw = r.width; hh = r.height;
+    el.hist.width = Math.round(hw * dpr); el.hist.height = Math.round(hh * dpr);
+    hctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawHistory();
+  }
+  const H_LO = 20, H_HI = 120, LEFT = 26;
+  const yOf = (db) => hh - 6 - (clamp(db, H_LO, H_HI) - H_LO) / (H_HI - H_LO) * (hh - 12);
+  function drawHistory() {
+    if (!hw) return;
+    hctx.clearRect(0, 0, hw, hh);
+    hctx.font = "12px Lato, Verdana, Helvetica, sans-serif";
+    hctx.textBaseline = "middle"; hctx.textAlign = "right";
+    hctx.lineWidth = 1;
+    for (const g of [20, 40, 60, 80, 100, 120]) {
+      const y = Math.round(yOf(g)) + 0.5;
+      hctx.strokeStyle = g === 20 ? "#999" : "#e6e6e6";
+      hctx.beginPath(); hctx.moveTo(LEFT, y); hctx.lineTo(hw, y); hctx.stroke();
+      hctx.fillStyle = "#888"; hctx.fillText(g, LEFT - 6, y);
+    }
+    const y85 = Math.round(yOf(85)) + 0.5;
+    hctx.strokeStyle = "#f09228"; hctx.setLineDash([4, 3]);
+    hctx.beginPath(); hctx.moveTo(LEFT, y85); hctx.lineTo(hw, y85); hctx.stroke();
+    hctx.setLineDash([]);
+    if (histCount < 2) return;
+
+    const step = (hw - LEFT) / (HIST_LEN - 1);
+    hctx.beginPath();
+    for (let i = 0; i < histCount; i++) {
+      const idx = (histHead - histCount + i + HIST_LEN) % HIST_LEN;
+      const x = hw - (histCount - 1 - i) * step, y = yOf(hist[idx]);
+      i ? hctx.lineTo(x, y) : hctx.moveTo(x, y);
+    }
+    hctx.strokeStyle = "#000"; hctx.lineWidth = 1.5; hctx.lineJoin = "round"; hctx.stroke();
+  }
+
+  // ---------- start / stop ----------
+  async function start() {
+    el.msg.textContent = "";
+    if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      el.msg.textContent = "Microphone access isn't available here. Open this page in Safari or Chrome.";
+      return;
+    }
+    el.start.disabled = true;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
+        video: false,
+      });
+    } catch (err) {
+      el.start.disabled = false;
+      el.msg.textContent = err && err.name === "NotAllowedError"
+        ? "Microphone access was blocked. Allow it for this site in your browser settings, then press Start."
+        : `Couldn't open the microphone (${err && err.name ? err.name : "error"}).`;
+      return;
+    }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    audioCtx = new AC();
+    if (audioCtx.state === "suspended") { try { await audioCtx.resume(); } catch {} }
+    const src = audioCtx.createMediaStreamSource(stream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = N;
+    analyser.smoothingTimeConstant = 0;
+    src.connect(analyser);
+    aGain = new Float64Array(N / 2 + 1);
+    for (let k = 0; k <= N / 2; k++) aGain[k] = aWeightPow(k * audioCtx.sampleRate / N);
+
+    running = true;
+    msSmooth = -1; warm = 0; lastT = performance.now() / 1000; lastText = 0; lastHist = 0;
+    el.start.disabled = false;
+    el.start.textContent = "Stop";
+    requestWakeLock();
+    rafId = requestAnimationFrame(frame);
+  }
+
+  function stop() {
+    running = false;
+    cancelAnimationFrame(rafId);
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    if (audioCtx) audioCtx.close().catch(() => {});
+    stream = null; audioCtx = null; analyser = null;
+    el.start.textContent = "Start";
+    el.label.textContent = "Stopped. Stats are kept until you reset.";
+    el.label.classList.remove("highlight");
+    el.overload.hidden = true;
+    releaseWakeLock();
+  }
+
+  function reset() {
+    minMs = Infinity; maxMs = 0; peakAmp = 0; energy = 0; runTime = 0; warm = 0;
+    histCount = 0; histHead = 0; msSmooth = -1;
+    renderStats(); drawHistory();
+    if (!running) {
+      el.num.textContent = "--";
+      el.label.textContent = "Press Start and allow the microphone.";
+      el.label.classList.remove("highlight");
+      shown = NaN;
+    }
+  }
+
+  async function requestWakeLock() { try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch {} }
+  function releaseWakeLock() { try { if (wakeLock) wakeLock.release(); } catch {} wakeLock = null; }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && running) {
+      requestWakeLock();
+      if (audioCtx && audioCtx.state !== "running") audioCtx.resume().catch(() => {});
+      lastT = performance.now() / 1000;
+    }
+  });
+
+  el.start.addEventListener("click", () => (running ? stop() : start()));
+  el.reset.addEventListener("click", reset);
+
+  // ---------- settings: current choice in bold, the other as a link ----------
+  function options(container, items, current, onPick) {
+    container.innerHTML = "";
+    items.forEach(([value, text], i) => {
+      if (i) container.append(" / ");
+      if (value === current) {
+        const b = document.createElement("b"); b.textContent = text; container.append(b);
+      } else {
+        const a = document.createElement("button"); a.className = "link"; a.textContent = text;
+        a.addEventListener("click", () => onPick(value)); container.append(a);
+      }
+    });
+  }
+  function syncToggles() {
+    options(el.wOpts, [["A", "A"], ["Z", "Z"]], weighting, (v) => { weighting = v; store.set("dbm.w", v); syncToggles(); reset(); });
+    options(el.tOpts, [["fast", "fast"], ["slow", "slow"]], speed, (v) => { speed = v; store.set("dbm.t", v); syncToggles(); });
+    el.unit.textContent = weighting === "A" ? "dB(A)" : "dB(Z)";
+  }
+
+  function syncOffset() {
+    const d = offset - DEFAULT_OFFSET;
+    el.offVal.textContent = `${d >= 0 ? "+" : "−"}${Math.abs(d) % 1 ? Math.abs(d).toFixed(1) : Math.abs(d)} dB`;
+    store.set("dbm.offset", offset);
+    if (running && msSmooth >= 0) { shown = toDb(msSmooth); renderText(shown); drawHistory(); } else renderStats();
+  }
+  const setOffset = (v) => { offset = clamp(Math.round(v * 10) / 10, DEFAULT_OFFSET - 40, DEFAULT_OFFSET + 40); syncOffset(); };
+  el.offMinus.addEventListener("click", () => setOffset(offset - 1));
+  el.offPlus.addEventListener("click", () => setOffset(offset + 1));
+  el.offReset.addEventListener("click", () => { setOffset(DEFAULT_OFFSET); el.calStatus.textContent = "Back to the default calibration."; });
+  el.match.addEventListener("click", () => {
+    const ref = parseFloat(el.refInput.value);
+    if (!isFinite(ref)) { el.calStatus.textContent = "Enter the reference meter's reading first."; return; }
+    if (!running || msSmooth < 0) { el.calStatus.textContent = "Start the meter first, then match while the sound is playing."; return; }
+    const before = toDb(msSmooth);
+    setOffset(offset + (ref - before));
+    el.calStatus.textContent = `Matched: ${before.toFixed(1)} → ${toDb(msSmooth).toFixed(1)} dB. Saved on this device.`;
+  });
+
+  // ---------- init ----------
+  syncToggles();
+  syncOffset();
+  sizeCanvas();
+  window.addEventListener("resize", sizeCanvas);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(drawHistory);
+
+})();
+</script>
+</body>
+</html>
